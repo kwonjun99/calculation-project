@@ -1,0 +1,99 @@
+#include <ncurses.h>
+#include <unistd.h>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <sstream>
+#include <iostream>
+
+struct CPUUsage {
+    long user, nice, system, idle;
+};
+
+CPUUsage getCPUUsage() {
+    std::ifstream file("/proc/stat");
+    std::string line;
+    CPUUsage usage = {0, 0, 0, 0};
+
+    if (std::getline(file, line)) {
+        std::istringstream ss(line);
+        std::string cpu;
+        ss >> cpu >> usage.user >> usage.nice >> usage.system >> usage.idle;
+    }
+
+    return usage;
+}
+
+float calculateCPUUsage(const CPUUsage& prev, const CPUUsage& curr) {
+    long prevTotal = prev.user + prev.nice + prev.system + prev.idle;
+    long currTotal = curr.user + curr.nice + curr.system + curr.idle;
+    long totalDiff = currTotal - prevTotal;
+    long idleDiff = curr.idle - prev.idle;
+
+    return (totalDiff - idleDiff) / static_cast<float>(totalDiff) * 100.0;
+}
+
+std::string getMemoryUsage() {
+    std::ifstream file("/proc/meminfo");
+    std::string line, memTotal, memFree;
+    std::getline(file, line);
+    memTotal = line;
+    std::getline(file, line);
+    memFree = line;
+
+    return memTotal + "\n" + memFree;
+}
+
+std::vector<std::string> getProcessList() {
+    std::vector<std::string> processes;
+    std::ifstream file("/proc");
+    for (const auto& entry : std::filesystem::directory_iterator("/proc")) {
+        if (entry.is_directory()) {
+            std::string filename = entry.path().filename().string();
+            if (std::all_of(filename.begin(), filename.end(), ::isdigit)) {
+                processes.push_back(filename);
+            }
+        }
+    }
+    return processes;
+}
+
+void displaySystemInfo(WINDOW* win, float cpuUsage, const std::string& memUsage, const std::vector<std::string>& processes) {
+    werase(win);
+    mvwprintw(win, 1, 1, "CPU Usage: %.2f%%", cpuUsage);
+    mvwprintw(win, 2, 1, "Memory Usage:\n%s", memUsage.c_str());
+    mvwprintw(win, 4, 1, "Processes:");
+    int line = 5;
+    for (const auto& process : processes) {
+        mvwprintw(win, line++, 1, "%s", process.c_str());
+        if (line > 20) break; // Limit the number of displayed processes
+    }
+    wrefresh(win);
+}
+
+int main() {
+    initscr();
+    noecho();
+    cbreak();
+    timeout(1000); // 1 second timeout for getch()
+
+    WINDOW* win = newwin(24, 80, 0, 0);
+    box(win, 0, 0);
+
+    CPUUsage prevUsage = getCPUUsage();
+    while (true) {
+        CPUUsage currUsage = getCPUUsage();
+        float cpuUsage = calculateCPUUsage(prevUsage, currUsage);
+        std::string memUsage = getMemoryUsage();
+        std::vector<std::string> processes = getProcessList();
+
+        displaySystemInfo(win, cpuUsage, memUsage, processes);
+
+        prevUsage = currUsage;
+        if (getch() == 'q') break; // Press 'q' to quit
+    }
+
+    delwin(win);
+    endwin();
+    return 0;
+}
